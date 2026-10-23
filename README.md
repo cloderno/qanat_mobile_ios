@@ -12,7 +12,6 @@ iOS-версия мобильного приложения Qanat на SwiftUI �
 
 ```sh
 brew install xcodegen
-cp Config/Secrets.xcconfig.example Config/Secrets.xcconfig   # и заполнить
 xcodegen generate
 open Qanat.xcodeproj
 ```
@@ -20,12 +19,15 @@ open Qanat.xcodeproj
 Зависимости (Swift Package Manager) Xcode скачает сам: Meta Wearables Device Access Toolkit (`MWDATCore`,
 `MWDATCamera`, `MWDATInputs`), Firebase Messaging, MarkdownUI. Минимальная версия iOS — 17.2.
 
-### Секреты и настройки — не в git
+### Секреты и настройки
 
-- `Config/Secrets.xcconfig` — `DEVELOPMENT_TEAM`, `META_APP_ID`, `CLIENT_TOKEN` (из Meta Wearables Developer Center,
-  те же, что `mwdat.*` в `local.properties` Android-версии). Шаблон — `Config/Secrets.xcconfig.example`.
-- `Qanat/GoogleService-Info.plist` — из консоли Firebase (iOS-приложение `com.rating.qanatmobile` в том же проекте,
-  что и Android). Без файла приложение работает, но push выключены. В Firebase нужно загрузить APNs-ключ (.p8).
+Репозиторий приватный, секреты хранятся в нём.
+
+- `Config/Secrets.xcconfig` — `META_APP_ID`, `CLIENT_TOKEN` (из Meta Wearables Developer Center, те же, что
+  `qanat.mwdat*` в `local.properties` Android-версии) и `DEVELOPMENT_TEAM` — его впишите сами.
+- `Qanat/GoogleService-Info.plist` — пока нет: скачать в консоли Firebase (iOS-приложение `com.rating.qanatmobile`
+  в том же проекте, что и Android) и положить сюда. Без файла приложение работает, но push выключены. В Firebase нужно
+  загрузить APNs-ключ (.p8).
 - Адрес сервера — `QANAT_BASE_URL` в `Config/Shared.xcconfig` (как `qanat.baseUrl` на Android).
 
 ## Тесты

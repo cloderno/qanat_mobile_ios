@@ -8,8 +8,6 @@ build/
 *.ipa
 *.dSYM.zip
 
-# Секреты и конфигурация Firebase конкретного проекта
-Config/Secrets.xcconfig
-Qanat/GoogleService-Info.plist
+# Секреты лежат в git: репозиторий приватный (Config/Secrets.xcconfig). GoogleService-Info.plist — тоже, когда появится.
 
 .DS_Store
