@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>chat_photos</key>
+  <dict>
+    <key>NSStringLocalizedFormatKey</key>
+    <string>%#@value@</string>
+    <key>value</key>
+    <dict>
+      <key>NSStringFormatSpecTypeKey</key>
+      <string>NSStringPluralRuleType</string>
+      <key>NSStringFormatValueTypeKey</key>
+      <string>d</string>
+      <key>one</key>
+      <string>%d фото</string>
+      <key>other</key>
+      <string>%d фото</string>
+    </dict>
+  </dict>
+  <key>chat_step_sources</key>
+  <dict>
+    <key>NSStringLocalizedFormatKey</key>
+    <string>%2$#@value@</string>
+    <key>value</key>
+    <dict>
+      <key>NSStringFormatSpecTypeKey</key>
+      <string>NSStringPluralRuleType</string>
+      <key>NSStringFormatValueTypeKey</key>
+      <string>d</string>
+      <key>one</key>
+      <string>%1$@ · %2$d дереккөз</string>
+      <key>other</key>
+      <string>%1$@ · %2$d дереккөз</string>
+    </dict>
+  </dict>
+  <key>gallery_delete_confirm_title</key>
+  <dict>
+    <key>NSStringLocalizedFormatKey</key>
+    <string>%#@value@</string>
+    <key>value</key>
+    <dict>
+      <key>NSStringFormatSpecTypeKey</key>
+      <string>NSStringPluralRuleType</string>
+      <key>NSStringFormatValueTypeKey</key>
+      <string>d</string>
+      <key>one</key>
+      <string>%d файлды жою керек пе?</string>
+      <key>other</key>
+      <string>%d файлды жою керек пе?</string>
+    </dict>
+  </dict>
+  <key>gallery_delete_dialog_title</key>
+  <dict>
+    <key>NSStringLocalizedFormatKey</key>
+    <string>%#@value@</string>
+    <key>value</key>
+    <dict>
+      <key>NSStringFormatSpecTypeKey</key>
+      <string>NSStringPluralRuleType</string>
+      <key>NSStringFormatValueTypeKey</key>
+      <string>d</string>
+      <key>one</key>
+      <string>%d фото мен бейнені жою керек пе?</string>
+      <key>other</key>
+      <string>%d фото мен бейнені жою керек пе?</string>
+    </dict>
+  </dict>
+  <key>gallery_deleted</key>
+  <dict>
+    <key>NSStringLocalizedFormatKey</key>
+    <string>%#@value@</string>
+    <key>value</key>
+    <dict>
+      <key>NSStringFormatSpecTypeKey</key>
+      <string>NSStringPluralRuleType</string>
+      <key>NSStringFormatValueTypeKey</key>
+      <string>d</string>
+      <key>one</key>
+      <string>%d жойылды</string>
+      <key>other</key>
+      <string>%d жойылды</string>
+    </dict>
+  </dict>
+</dict>
+</plist>

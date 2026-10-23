@@ -1,0 +1,7 @@
+// Общие настройки обеих сборок. Секреты — в Secrets.xcconfig (в git не попадает, образец — Secrets.xcconfig.example).
+// В xcconfig «//» начинает комментарий, поэтому в адресе «/$()/» вместо «//».
+QANAT_BASE_URL = https:/$()/qm.e-vko.kz/api/v1/
+META_APP_ID = 0
+CLIENT_TOKEN = 0
+
+#include? "Secrets.xcconfig"

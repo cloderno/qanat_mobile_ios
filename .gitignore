@@ -1,0 +1,15 @@
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+build/
+.swiftpm/
+*.ipa
+*.dSYM.zip
+
+# Секреты и конфигурация Firebase конкретного проекта
+Config/Secrets.xcconfig
+Qanat/GoogleService-Info.plist
+
+.DS_Store

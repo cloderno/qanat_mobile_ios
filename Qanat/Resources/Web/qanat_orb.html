@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Канат</title>
+<style>html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+canvas { display: block; width: 100vw; height: 100vh; }</style>
+</head>
+<body>
+<canvas id="orb"></canvas>
+<script>
+// Шар Каната в духе GPT Live — один рисунок на двоих: плитка бота в совещании
+// (qanat_payload.js, холст камеры) и страница совещания (frontend
+// src/components/KanatOrb.tsx импортирует этот же файл).
+//
+// Внутри сферы переливаются мягкие облака цвета состояния: слушает — шар
+// дышит, облака плывут; думает — облака закручиваются и мерцают; говорит —
+// шар пульсирует. Как эквалайзер: край шара волнуется по спектру звука, а
+// вокруг, пока звучит, горит кольцо полос — голос Каната сильно, голоса
+// участников (он их слышит) мягче. Только Canvas 2D без фильтров: плитка
+// рисуется на CPU 20 раз в секунду.
+//
+// window.QanatOrb.painter() → draw(g, cx, cy, R, state, t, sound, still)
+//   state — listening/idle/connecting | thinking | speaking | ignored/ended | error;
+//   t — секунды; sound — {in, out}: по 8 полос 0…1 звука совещания и голоса
+//   Каната (QanatOrb.bands) или null — тогда ровная волна, пока говорит;
+//   still — неподвижный кадр («уменьшить движение»).
+// window.QanatOrb.bands(samples, rate) — 8 полос 0…1 последнего окна звука;
+// так же считает голосовой сервер (backend/realtime/meter.py).
+(function () {
+    // [глубокий, основной, светлый]
+    const PALETTES = {
+        idle: [[34, 64, 196], [93, 135, 255], [186, 225, 255]],
+        thinking: [[196, 96, 10], [255, 174, 31], [255, 232, 160]],
+        speaking: [[0, 128, 128], [19, 222, 185], [190, 255, 240]],
+        muted: [[64, 78, 98], [133, 151, 176], [206, 214, 226]],
+        error: [[176, 62, 44], [250, 137, 107], [255, 206, 190]],
+    };
+    const ALIAS = { listening: 'idle', connecting: 'idle', ignored: 'muted', ended: 'muted' };
+    // как быстро плывут облака
+    const SPEED = { idle: 0.35, thinking: 1.6, speaking: 0.8, muted: 0.12, error: 0.3 };
+    const WHITE = [255, 255, 255];
+    // облака: радиус (доля R), сплюснутость, частоты по x/y, фаза, цвет, смешение, яркость
+    const CLOUDS = [
+        { r: 0.95, sq: 0.7, wx: 0.53, wy: 0.41, ph: 0.0, c: 0, mode: 'source-over', a: 0.8 },
+        { r: 0.8, sq: 0.55, wx: 0.37, wy: 0.61, ph: 2.1, c: 1, mode: 'source-over', a: 0.75 },
+        { r: 0.7, sq: 0.6, wx: 0.71, wy: 0.29, ph: 4.2, c: 2, mode: 'screen', a: 0.7 },
+        { r: 0.55, sq: 0.45, wx: 0.47, wy: 0.83, ph: 1.3, c: 2, mode: 'screen', a: 0.55 },
+        { r: 0.6, sq: 0.55, wx: 0.89, wy: 0.57, ph: 3.4, c: 3, mode: 'screen', a: 0.55 },
+    ];
+    const TAU = Math.PI * 2;
+
+    // ── спектр: как backend/realtime/meter.py ─────────────────────────────
+    const BANDS = 8;
+    const LOW = 90, HIGH = 6000, FLOOR_DB = -65, CEIL_DB = -15, WINDOW_SEC = 0.032;
+    const layouts = {};
+
+    function layout(rate) {
+        if (layouts[rate]) return layouts[rate];
+        const n = 1 << Math.ceil(Math.log2(rate * WINDOW_SEC));
+        const hann = new Float32Array(n);
+        let sum = 0;
+        for (let i = 0; i < n; i++) sum += (hann[i] = 0.5 - 0.5 * Math.cos((TAU * i) / (n - 1)));
+        const top = Math.min(HIGH, rate / 2);
+        const bins = [];
+        for (let b = 0; b < BANDS; b++) {
+            const lo = LOW * Math.pow(top / LOW, b / BANDS), hi = LOW * Math.pow(top / LOW, (b + 1) / BANDS);
+            const a = Math.floor((lo * n) / rate);
+            bins.push([a, Math.min(Math.max(a + 1, Math.ceil((hi * n) / rate)), n / 2 + 1)]);
+        }
+        const bits = Math.log2(n), rev = new Uint32Array(n);
+        for (let i = 0; i < n; i++) {
+            let r = 0;
+            for (let k = 0; k < bits; k++) r |= ((i >> k) & 1) << (bits - 1 - k);
+            rev[i] = r;
+        }
+        const cos = new Float32Array(n / 2), sin = new Float32Array(n / 2);
+        for (let k = 0; k < n / 2; k++) { cos[k] = Math.cos((-TAU * k) / n); sin[k] = Math.sin((-TAU * k) / n); }
+        return (layouts[rate] = { n, hann, sum, bins, rev, cos, sin, re: new Float32Array(n), im: new Float32Array(n) });
+    }
+
+    function bands(samples, rate) {
+        const L = layout(rate), n = L.n, re = L.re, im = L.im, out = new Float32Array(BANDS);
+        const len = samples ? samples.length : 0, pad = Math.max(0, n - len);
+        for (let i = 0; i < n; i++) {
+            re[i] = i < pad ? 0 : samples[len - n + i] * L.hann[i];
+            im[i] = 0;
+        }
+        for (let i = 0; i < n; i++) {
+            const j = L.rev[i];
+            if (j > i) { let x = re[i]; re[i] = re[j]; re[j] = x; x = im[i]; im[i] = im[j]; im[j] = x; }
+        }
+        for (let size = 2; size <= n; size <<= 1) {
+            const half = size >> 1, stride = n / size;
+            for (let i = 0; i < n; i += size) {
+                for (let k = 0; k < half; k++) {
+                    const wr = L.cos[k * stride], wi = L.sin[k * stride], j = i + k, l = j + half;
+                    const tr = re[l] * wr - im[l] * wi, ti = re[l] * wi + im[l] * wr;
+                    re[l] = re[j] - tr; im[l] = im[j] - ti; re[j] += tr; im[j] += ti;
+                }
+            }
+        }
+        for (let b = 0; b < BANDS; b++) {
+            let peak = 0;
+            for (let k = L.bins[b][0]; k < L.bins[b][1]; k++) peak = Math.max(peak, Math.hypot(re[k], im[k]));
+            const db = 20 * Math.log10(Math.max((peak * 2) / L.sum, 1e-9));
+            out[b] = Math.min(1, Math.max(0, (db - FLOOR_DB) / (CEIL_DB - FLOOR_DB)));
+        }
+        return out;
+    }
+
+    // ── рисунок ─────────────────────────────────────────────────────────
+    const EDGE = 96;   // точек на краю шара
+    const RING = 48;   // полос кольца-эквалайзера
+
+    function painter() {
+        const pal = PALETTES.idle.map((c) => c.slice());
+        const eqIn = new Float32Array(BANDS), eqOut = new Float32Array(BANDS), eq = new Float32Array(BANDS);
+        let level = 0;
+        let phase = 0;
+        let spin = 0;
+        let last = null;
+
+        // полосы по кругу зеркально (низы сверху, верхи снизу), плавно между ними
+        const around = (theta) => {
+            let p = (((theta - spin * 0.3) / TAU) * BANDS * 2) % (BANDS * 2);
+            if (p < 0) p += BANDS * 2;
+            const i = Math.floor(p), f = p - i;
+            const at = (k) => { k %= BANDS * 2; return eq[k < BANDS ? k : BANDS * 2 - 1 - k]; };
+            const a = at(i), b = at(i + 1);
+            return a + (b - a) * (1 - Math.cos(f * Math.PI)) / 2;
+        };
+
+        return function draw(g, cx, cy, R, state, t, sound, still) {
+            const key = PALETTES[state] ? state : ALIAS[state] || 'idle';
+            const target = PALETTES[key];
+            const dt = still || last === null ? 0 : Math.min(0.1, Math.max(0, t - last));
+            last = t;
+            // сглаживание не зависит от частоты кадров: как perFrame за кадр при 20 кадрах/с
+            const ease = (perFrame) => (still ? 1 : 1 - Math.pow(1 - perFrame, dt * 20));
+            const k = ease(0.12);
+            for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) pal[i][j] += (target[i][j] - pal[i][j]) * k;
+
+            const speaking = key === 'speaking';
+            const up = ease(0.6), down = ease(0.2);
+            for (let b = 0; b < BANDS; b++) {
+                let vin = 0, vout = 0;
+                if (sound) {
+                    vin = sound.in ? sound.in[b] || 0 : 0;
+                    vout = sound.out ? sound.out[b] || 0 : 0;
+                } else if (speaking) {
+                    // звука нет — ровная «речь», как раньше у плитки
+                    vout = Math.max(0, 0.35 + 0.3 * Math.sin(t * 7 + b * 1.3) * Math.sin(t * 2.3 + b * 0.7));
+                }
+                eqIn[b] += (vin - eqIn[b]) * (vin > eqIn[b] ? up : down);
+                eqOut[b] += (vout - eqOut[b]) * (vout > eqOut[b] ? up : down);
+                eq[b] = Math.max(eqOut[b], eqIn[b] * 0.6);
+            }
+            let sumIn = 0, sumOut = 0, energy = 0;
+            for (let b = 0; b < BANDS; b++) { sumIn += eqIn[b]; sumOut += eqOut[b]; energy += eq[b]; }
+            const levelIn = Math.min(1, (sumIn / BANDS) * 1.6);
+            const levelOut = Math.min(1, (sumOut / BANDS) * 1.6);
+            energy /= BANDS;
+            level = Math.max(levelOut, levelIn * 0.5);
+            phase += dt * (SPEED[key] + levelOut * 2.5 + levelIn * 1.0);
+            spin += dt * (key === 'thinking' ? 2.2 : 0.15 + levelOut * 0.6);
+
+            let scale = 1;
+            if (speaking) scale += levelOut * 0.12;
+            else if (key === 'idle') scale += 0.03 * Math.sin(t * 1.6) + levelIn * 0.05;
+            else if (key === 'thinking') scale += 0.015 * Math.sin(t * 5);
+            const Rs = R * scale;
+            const edge = (theta) => Rs * (1 + 0.14 * around(theta));
+            const rgb = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+            const outline = () => {
+                g.beginPath();
+                for (let i = 0; i <= EDGE; i++) {
+                    const th = (i / EDGE) * TAU, r = edge(th);
+                    if (i) g.lineTo(cx + Math.cos(th) * r, cy + Math.sin(th) * r);
+                    else g.moveTo(cx + Math.cos(th) * r, cy + Math.sin(th) * r);
+                }
+                g.closePath();
+            };
+            let grad;
+
+            // свечение вокруг
+            const glowR = Rs * (1.45 + level * 0.3);
+            grad = g.createRadialGradient(cx, cy, Rs * 0.7, cx, cy, glowR);
+            grad.addColorStop(0, rgb(pal[1], 0.4 + level * 0.25));
+            grad.addColorStop(1, rgb(pal[1], 0));
+            g.fillStyle = grad;
+            g.beginPath();
+            g.arc(cx, cy, glowR, 0, TAU);
+            g.fill();
+
+            // кольцо-эквалайзер: пока звучит
+            const ring = Math.min(1, energy * 3);
+            if (ring > 0.02) {
+                g.lineCap = 'round';
+                g.lineWidth = Math.max(1, R * 0.035);
+                for (let j = 0; j < RING; j++) {
+                    // квадрат — громкие полосы выше, тихие ниже: видно спектр, а не ровный ёжик
+                    const th = (j / RING) * TAU, v = around(th), vv = v * v;
+                    const r0 = edge(th) + R * 0.1, r1 = r0 + R * (0.03 + 0.5 * vv);
+                    g.strokeStyle = rgb(pal[2], (0.2 + 0.7 * v) * ring);
+                    g.beginPath();
+                    g.moveTo(cx + Math.cos(th) * r0, cy + Math.sin(th) * r0);
+                    g.lineTo(cx + Math.cos(th) * r1, cy + Math.sin(th) * r1);
+                    g.stroke();
+                }
+            }
+
+            const Rb = Rs * 1.14;  // охват шара с волной края
+            g.save();
+            outline();
+            g.clip();
+
+            // основа: светлее сверху слева, глубже к краю
+            grad = g.createRadialGradient(cx - Rs * 0.3, cy - Rs * 0.35, Rs * 0.1, cx, cy, Rb);
+            grad.addColorStop(0, rgb(pal[2], 1));
+            grad.addColorStop(0.55, rgb(pal[1], 1));
+            grad.addColorStop(1, rgb(pal[0], 1));
+            g.fillStyle = grad;
+            g.fillRect(cx - Rb, cy - Rb, Rb * 2, Rb * 2);
+
+            // облака
+            const cs = Math.cos(spin);
+            const sn = Math.sin(spin);
+            for (const c of CLOUDS) {
+                const a = phase * c.wx * 2 + c.ph;
+                const b = phase * c.wy * 2 + c.ph * 1.7;
+                const x = Math.sin(a) * 0.45;
+                const y = Math.cos(b) * 0.45;
+                const shimmer = key === 'thinking' && c.mode === 'screen' ? 0.8 + 0.4 * Math.sin(t * 4 + c.ph) : 1;
+                const col = c.c === 3 ? WHITE : pal[c.c];
+                const rr = Rs * c.r * (1 + level * 0.15);
+                g.save();
+                g.globalCompositeOperation = c.mode;
+                g.translate(cx + (x * cs - y * sn) * Rs, cy + (x * sn + y * cs) * Rs);
+                g.rotate(a * 0.5 + spin);
+                g.scale(1, c.sq);
+                grad = g.createRadialGradient(0, 0, 0, 0, 0, rr);
+                grad.addColorStop(0, rgb(col, c.a * shimmer));
+                grad.addColorStop(0.6, rgb(col, c.a * shimmer * 0.45));
+                grad.addColorStop(1, rgb(col, 0));
+                g.fillStyle = grad;
+                g.beginPath();
+                g.arc(0, 0, rr, 0, TAU);
+                g.fill();
+                g.restore();
+            }
+
+            // объём: тень к краю
+            grad = g.createRadialGradient(cx, cy, Rs * 0.6, cx, cy, Rb);
+            grad.addColorStop(0, rgb(pal[0], 0));
+            grad.addColorStop(1, rgb(pal[0], 0.55));
+            g.fillStyle = grad;
+            g.fillRect(cx - Rb, cy - Rb, Rb * 2, Rb * 2);
+
+            // отражённый свет снизу справа и блик сверху слева
+            g.globalCompositeOperation = 'screen';
+            grad = g.createRadialGradient(cx + Rs * 0.45, cy + Rs * 0.55, 0, cx + Rs * 0.45, cy + Rs * 0.55, Rs * 0.6);
+            grad.addColorStop(0, rgb(pal[2], 0.35));
+            grad.addColorStop(1, rgb(pal[2], 0));
+            g.fillStyle = grad;
+            g.fillRect(cx - Rb, cy - Rb, Rb * 2, Rb * 2);
+            grad = g.createRadialGradient(cx - Rs * 0.35, cy - Rs * 0.42, 0, cx - Rs * 0.35, cy - Rs * 0.42, Rs * 0.55);
+            grad.addColorStop(0, 'rgba(255,255,255,0.3)');
+            grad.addColorStop(1, 'rgba(255,255,255,0)');
+            g.fillStyle = grad;
+            g.fillRect(cx - Rb, cy - Rb, Rb * 2, Rb * 2);
+            g.restore();
+
+            // тонкий светлый ободок по волне края
+            g.lineWidth = Math.max(1, Rs * 0.015);
+            g.strokeStyle = rgb(pal[2], 0.35 + energy * 0.4);
+            outline();
+            g.stroke();
+        };
+    }
+
+    window.QanatOrb = { painter, bands, BANDS };
+})();
+</script>
+<script>
+// Шар Каната для голосового разговора в приложении (WebView с прозрачным фоном):
+// тот же рисунок и анимация, что плитка бота в Zoom (qanat_orb.js). Приложение
+// управляет им из кода:
+//   qanat.state('listening' | 'thinking' | 'speaking' | 'connecting' | 'error')
+//   qanat.sound(mic, voice) — по 8 полос 0…1 микрофона и голоса Каната, ~20 раз
+//   в секунду (необязательно: без них край шара — ровная волна, пока говорит).
+// Начальное состояние — ?state=.
+(function () {
+    const el = document.getElementById('orb');
+    const g = el.getContext('2d');
+    const draw = window.QanatOrb.painter();
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const FRESH_MS = 500;
+    let state = new URLSearchParams(window.location.search).get('state') || 'listening';
+    let sound = null;
+    let soundAt = 0;
+
+    function fit() {
+        const dpr = window.devicePixelRatio || 1;
+        el.width = Math.round(window.innerWidth * dpr);
+        el.height = Math.round(window.innerHeight * dpr);
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        if (still) paint(performance.now());
+    }
+
+    function paint(now) {
+        const w = window.innerWidth, h = window.innerHeight;
+        g.clearRect(0, 0, w, h);
+        // шар с волной края и кольцом полос занимает до 1.9 радиуса
+        draw(g, w / 2, h / 2, Math.min(w, h) * 0.25, state, now / 1000,
+            now - soundAt < FRESH_MS ? sound : null, still);
+        if (!still) window.requestAnimationFrame(paint);
+    }
+
+    window.qanat = {
+        state(next) {
+            state = String(next || 'listening');
+            if (still) paint(performance.now());
+        },
+        sound(mic, voice) {
+            sound = { in: mic || null, out: voice || null };
+            soundAt = performance.now();
+        },
+    };
+    window.addEventListener('resize', fit);
+    fit();
+    if (!still) window.requestAnimationFrame(paint);
+})();
+</script>
+</body>
+</html>

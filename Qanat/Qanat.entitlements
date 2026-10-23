@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Push через APNs (Firebase Messaging доставляет через него). Для App Store — production. -->
+	<key>aps-environment</key>
+	<string>development</string>
+	<!-- Universal Links: ссылка «новый пароль» из письма открывается в приложении,
+	     если на сайте лежит apple-app-site-association с этим приложением. -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:qm.e-vko.kz</string>
+	</array>
+</dict>
+</plist>
